@@ -1,0 +1,23 @@
+{
+  "name": "auris-platform",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "build": "npm run --workspaces build",
+    "dev:api": "npm run --workspace=@auris/api dev",
+    "dev:web": "npm run --workspace=@auris/web dev",
+    "test": "npm run --workspace=@auris/runtime test && npm run --workspace=@auris/api test",
+    "db:migrate": "npm run --workspace=@auris/database migrate",
+    "db:seed": "npm run --workspace=@auris/database seed",
+    "db:generate": "npm run --workspace=@auris/database generate"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.18.2",
+    "typescript": "^5.7.2",
+    "ws": "^8.22.0"
+  }
+}

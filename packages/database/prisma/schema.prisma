@@ -1,0 +1,592 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum Role {
+  OWNER
+  ADMIN
+  MEMBER
+}
+
+enum WalletTxType {
+  TOPUP
+  CALL_HOLD
+  CALL_SETTLEMENT
+  CALL_REFUND
+  NUMBER_SUBSCRIPTION
+  AI_ACTION
+}
+
+enum ReservationStatus {
+  HELD
+  SETTLED
+  CANCELLED
+  EXPIRED
+}
+
+enum AgentRoleType {
+  INSTANT_LEAD
+  BULK_CAMPAIGN
+  RECEPTIONIST
+}
+
+enum VoiceTier {
+  STANDARD
+  PREMIUM
+}
+
+enum LeadStatus {
+  TOTAL
+  QUALIFIED
+  PENDING_CALLBACK
+  HOT
+}
+
+enum CampaignStatus {
+  DRAFT
+  RUNNING
+  PAUSED
+  COMPLETED
+  CANCELLED
+}
+
+enum RecipientStatus {
+  QUEUED
+  DISPATCHED
+  CONNECTED
+  BUSY
+  NO_ANSWER
+  FAILED
+  SKIPPED_DNC
+}
+
+enum CallDirection {
+  INBOUND
+  OUTBOUND_INSTANT
+  OUTBOUND_BULK
+  BROWSER_TEST
+}
+
+enum CallStatus {
+  INITIATED
+  RINGING
+  IN_PROGRESS
+  COMPLETED
+  BUSY
+  NO_ANSWER
+  FAILED
+  REJECTED
+}
+
+enum CallOutcome {
+  QUALIFIED
+  INTERESTED
+  CALLBACK
+  NOT_INTERESTED
+  NO_RESPONSE
+  NO_ANSWER
+  BUSY
+  CALL_FAILED
+  VOICEMAIL
+}
+
+enum CallSentiment {
+  POSITIVE
+  NEUTRAL
+  NEGATIVE
+}
+
+enum SpeakerType {
+  AGENT
+  CALLER
+}
+
+model Organization {
+  id                    String              @id @default(uuid()) @db.Uuid
+  name                  String
+  slug                  String              @unique
+  defaultLanguage       String              @default("te-IN+en")
+  smartFollowups        Boolean             @default(false)
+  createdAt             DateTime            @default(now()) @map("created_at")
+  updatedAt             DateTime            @updatedAt @map("updated_at")
+
+  memberships           Membership[]
+  wallet                Wallet?
+  agents                Agent[]
+  phoneNumbers          PhoneNumber[]
+  leads                 Lead[]
+  dncEntries            DoNotCallEntry[]
+  campaigns             Campaign[]
+  calls                 Call[]
+  savedCredentials      SavedCredential[]
+  apiKeys               ApiKey[]
+  webhookEndpoints      WebhookEndpoint[]
+  compliancePolicy      CompliancePolicy?
+  policyAcceptances     PolicyAcceptance[]
+
+  @@map("organizations")
+}
+
+model User {
+  id                    String              @id @default(uuid()) @db.Uuid
+  email                 String              @unique
+  passwordHash          String?             @map("password_hash")
+  name                  String
+  status                String              @default("active")
+  createdAt             DateTime            @default(now()) @map("created_at")
+  updatedAt             DateTime            @updatedAt @map("updated_at")
+
+  memberships           Membership[]
+  sessions              Session[]
+  policyAcceptances     PolicyAcceptance[]
+
+  @@map("users")
+}
+
+model Membership {
+  id                    String              @id @default(uuid()) @db.Uuid
+  userId                String              @map("user_id") @db.Uuid
+  organizationId        String              @map("organization_id") @db.Uuid
+  role                  Role                @default(MEMBER)
+  createdAt             DateTime            @default(now()) @map("created_at")
+
+  user                  User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization          Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, organizationId])
+  @@index([organizationId])
+  @@map("memberships")
+}
+
+model Session {
+  id                    String              @id @default(uuid()) @db.Uuid
+  userId                String              @map("user_id") @db.Uuid
+  tokenHash             String              @unique @map("token_hash")
+  expiresAt             DateTime            @map("expires_at")
+  createdAt             DateTime            @default(now()) @map("created_at")
+
+  user                  User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+model Wallet {
+  id                    String              @id @default(uuid()) @db.Uuid
+  organizationId        String              @unique @map("organization_id") @db.Uuid
+  balanceCredits        Decimal             @default(50.0000) @map("balance_credits") @db.Decimal(12, 4)
+  reservedCredits       Decimal             @default(0.0000) @map("reserved_credits") @db.Decimal(12, 4)
+  currency              String              @default("INR")
+  version               Int                 @default(1)
+  lowBalanceThreshold   Decimal             @default(50.0000) @map("low_balance_threshold") @db.Decimal(12, 4)
+  createdAt             DateTime            @default(now()) @map("created_at")
+  updatedAt             DateTime            @updatedAt @map("updated_at")
+
+  organization          Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  reservations          WalletReservation[]
+  transactions          CreditTransaction[]
+
+  @@map("wallets")
+}
+
+model WalletReservation {
+  id                    String              @id @default(uuid()) @db.Uuid
+  walletId              String              @map("wallet_id") @db.Uuid
+  callId                String              @unique @map("call_id")
+  reservedAmount        Decimal             @map("reserved_amount") @db.Decimal(12, 4)
+  settledAmount         Decimal?            @map("settled_amount") @db.Decimal(12, 4)
+  unpaidAmount          Decimal             @default(0.0000) @map("unpaid_amount") @db.Decimal(12, 4)
+  status                ReservationStatus   @default(HELD)
+  expiresAt             DateTime            @map("expires_at")
+  createdAt             DateTime            @default(now()) @map("created_at")
+  updatedAt             DateTime            @updatedAt @map("updated_at")
+
+  wallet                Wallet              @relation(fields: [walletId], references: [id], onDelete: Cascade)
+
+  @@index([walletId, status])
+  @@index([status, expiresAt])
+  @@map("wallet_reservations")
+}
+
+model CreditTransaction {
+  id                    String              @id @default(uuid()) @db.Uuid
+  walletId              String              @map("wallet_id") @db.Uuid
+  amountCredits         Decimal             @map("amount_credits") @db.Decimal(12, 4)
+  balanceAfter          Decimal             @map("balance_after") @db.Decimal(12, 4)
+  type                  WalletTxType
+  referenceId           String?             @map("reference_id")
+  idempotencyKey        String              @unique @map("idempotency_key")
+  description           String?
+  createdAt             DateTime            @default(now()) @map("created_at")
+
+  wallet                Wallet              @relation(fields: [walletId], references: [id], onDelete: Cascade)
+
+  @@index([walletId, createdAt(sort: Desc)])
+  @@map("credit_transactions")
+}
+
+model Agent {
+  id                    String              @id @default(uuid()) @db.Uuid
+  organizationId        String              @map("organization_id") @db.Uuid
+  name                  String
+  roleType              AgentRoleType       @default(INSTANT_LEAD) @map("role_type")
+  voiceTier             VoiceTier           @default(STANDARD) @map("voice_tier")
+  voiceId               String              @default("sarvam-bulbul-sneha") @map("voice_id")
+  primaryLanguage       String              @default("English") @map("primary_language")
+  englishEnhance        Boolean             @default(true) @map("english_enhance")
+  promptTemplate        String              @map("prompt_template") @db.Text
+  isActive              Boolean             @default(true) @map("is_active")
+  createdAt             DateTime            @default(now()) @map("created_at")
+  updatedAt             DateTime            @updatedAt @map("updated_at")
+
+  organization          Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  versions              AgentVersion[]
+  knowledgeSources      KnowledgeSource[]
+  phoneNumbers          PhoneNumber[]
+  campaigns             Campaign[]
+  calls                 Call[]
+
+  @@index([organizationId])
+  @@map("agents")
+}
+
+model AgentVersion {
+  id                    String              @id @default(uuid()) @db.Uuid
+  agentId               String              @map("agent_id") @db.Uuid
+  versionNumber         Int                 @map("version_number")
+  snapshotJson          Json                @map("snapshot_json")
+  publishedBy           String?             @map("published_by") @db.Uuid
+  createdAt             DateTime            @default(now()) @map("created_at")
+
+  agent                 Agent               @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  calls                 Call[]
+
+  @@unique([agentId, versionNumber])
+  @@map("agent_versions")
+}
+
+model KnowledgeSource {
+  id                    String              @id @default(uuid()) @db.Uuid
+  agentId               String              @map("agent_id") @db.Uuid
+  title                 String
+  contentText           String              @map("content_text") @db.Text
+  status                String              @default("active")
+  createdAt             DateTime            @default(now()) @map("created_at")
+  updatedAt             DateTime            @updatedAt @map("updated_at")
+
+  agent                 Agent               @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
+  @@index([agentId])
+  @@map("knowledge_sources")
+}
+
+model PhoneNumber {
+  id                    String              @id @default(uuid()) @db.Uuid
+  organizationId        String              @map("organization_id") @db.Uuid
+  phoneNumberE164       String              @unique @map("phone_number_e164")
+  provider              String              @default("plivo")
+  monthlyCost           Decimal             @default(649.0000) @map("monthly_cost") @db.Decimal(10, 4)
+  assignedAgentId       String?             @map("assigned_agent_id") @db.Uuid
+  status                String              @default("active")
+  renewalDate           DateTime?           @map("renewal_date")
+  createdAt             DateTime            @default(now()) @map("created_at")
+  updatedAt             DateTime            @updatedAt @map("updated_at")
+
+  organization          Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  assignedAgent         Agent?              @relation(fields: [assignedAgentId], references: [id], onDelete: SetNull)
+  calls                 Call[]
+
+  @@index([organizationId])
+  @@map("phone_numbers")
+}
+
+model Lead {
+  id                    String              @id @default(uuid()) @db.Uuid
+  organizationId        String              @map("organization_id") @db.Uuid
+  phoneNumberE164       String              @map("phone_number_e164")
+  name                  String?
+  source                String              @default("manual")
+  status                LeadStatus          @default(TOTAL)
+  extractedData         Json?               @map("extracted_data")
+  createdAt             DateTime            @default(now()) @map("created_at")
+  updatedAt             DateTime            @updatedAt @map("updated_at")
+
+  organization          Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  campaignRecipients    CampaignRecipient[]
+
+  @@index([organizationId, status])
+  @@index([organizationId, phoneNumberE164])
+  @@map("leads")
+}
+
+model DoNotCallEntry {
+  id                    String              @id @default(uuid()) @db.Uuid
+  organizationId        String              @map("organization_id") @db.Uuid
+  phoneNumberE164       String              @map("phone_number_e164")
+  reason                String?
+  createdAt             DateTime            @default(now()) @map("created_at")
+
+  organization          Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, phoneNumberE164])
+  @@index([organizationId])
+  @@map("do_not_call_entries")
+}
+
+model Campaign {
+  id                    String              @id @default(uuid()) @db.Uuid
+  organizationId        String              @map("organization_id") @db.Uuid
+  agentId               String              @map("agent_id") @db.Uuid
+  name                  String
+  status                CampaignStatus      @default(DRAFT)
+  concurrencyLimit      Int                 @default(1) @map("concurrency_limit")
+  callingHoursStart     String              @default("10:00") @map("calling_hours_start")
+  callingHoursEnd       String              @default("19:00") @map("calling_hours_end")
+  timezone              String              @default("Asia/Kolkata")
+  totalContacts         Int                 @default(0) @map("total_contacts")
+  completedContacts     Int                 @default(0) @map("completed_contacts")
+  createdAt             DateTime            @default(now()) @map("created_at")
+  updatedAt             DateTime            @updatedAt @map("updated_at")
+
+  organization          Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  agent                 Agent               @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  recipients            CampaignRecipient[]
+  calls                 Call[]
+
+  @@index([organizationId, status])
+  @@map("campaigns")
+}
+
+model CampaignRecipient {
+  id                    String              @id @default(uuid()) @db.Uuid
+  campaignId            String              @map("campaign_id") @db.Uuid
+  leadId                String?             @map("lead_id") @db.Uuid
+  phoneNumberE164       String              @map("phone_number_e164")
+  status                RecipientStatus     @default(QUEUED)
+  attemptCount          Int                 @default(0) @map("attempt_count")
+  maxAttempts           Int                 @default(3) @map("max_attempts")
+  nextRetryAt           DateTime?           @map("next_retry_at")
+  lastCallId            String?             @map("last_call_id")
+  createdAt             DateTime            @default(now()) @map("created_at")
+  updatedAt             DateTime            @updatedAt @map("updated_at")
+
+  campaign              Campaign            @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  lead                  Lead?               @relation(fields: [leadId], references: [id], onDelete: SetNull)
+
+  @@index([campaignId, status, nextRetryAt])
+  @@map("campaign_recipients")
+}
+
+model Call {
+  id                    String              @id @default(uuid()) @db.Uuid
+  organizationId        String              @map("organization_id") @db.Uuid
+  agentId               String              @map("agent_id") @db.Uuid
+  agentVersionId        String?             @map("agent_version_id") @db.Uuid
+  phoneNumberId         String?             @map("phone_number_id") @db.Uuid
+  campaignId            String?             @map("campaign_id") @db.Uuid
+  carrierCallId         String?             @unique @map("carrier_call_id")
+  direction             CallDirection
+  callerNumber          String              @map("caller_number")
+  destinationNumber     String              @map("destination_number")
+  status                CallStatus          @default(INITIATED)
+  durationSeconds       Int                 @default(0) @map("duration_seconds")
+  billableSeconds       Int                 @default(0) @map("billable_seconds")
+  creditsDeducted       Decimal             @default(0.0000) @map("credits_deducted") @db.Decimal(10, 4)
+  providerCostInr       Decimal             @default(0.0000) @map("provider_cost_inr") @db.Decimal(10, 4)
+  outcome               CallOutcome?
+  sentiment             CallSentiment?
+  terminationReason     String?             @map("termination_reason")
+  startedAt             DateTime?           @map("started_at")
+  endedAt               DateTime?           @map("ended_at")
+  createdAt             DateTime            @default(now()) @map("created_at")
+  updatedAt             DateTime            @updatedAt @map("updated_at")
+
+  organization          Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  agent                 Agent               @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  agentVersion          AgentVersion?       @relation(fields: [agentVersionId], references: [id], onDelete: SetNull)
+  phoneNumber           PhoneNumber?        @relation(fields: [phoneNumberId], references: [id], onDelete: SetNull)
+  campaign              Campaign?           @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  transcripts           Transcript[]
+  events                CallEvent[]
+  recording             Recording?
+  toolExecutions        CallToolExecution[]
+
+  @@index([organizationId, createdAt(sort: Desc)])
+  @@index([organizationId, status])
+  @@index([organizationId, outcome])
+  @@map("calls")
+}
+
+model CallEvent {
+  id                    String              @id @default(uuid()) @db.Uuid
+  callId                String              @map("call_id") @db.Uuid
+  eventType             String              @map("event_type")
+  fromState             String?             @map("from_state")
+  toState               String?             @map("to_state")
+  payloadJson           Json?               @map("payload_json")
+  latencyMs             Int?                @map("latency_ms")
+  timestamp             DateTime            @default(now())
+
+  call                  Call                @relation(fields: [callId], references: [id], onDelete: Cascade)
+
+  @@index([callId, timestamp])
+  @@map("call_events")
+}
+
+model Transcript {
+  id                    String              @id @default(uuid()) @db.Uuid
+  callId                String              @map("call_id") @db.Uuid
+  speaker               SpeakerType
+  text                  String              @db.Text
+  timestampMs           Int                 @map("timestamp_ms")
+  languageCode          String?             @map("language_code")
+  createdAt             DateTime            @default(now()) @map("created_at")
+
+  call                  Call                @relation(fields: [callId], references: [id], onDelete: Cascade)
+
+  @@index([callId, timestampMs])
+  @@map("transcripts")
+}
+
+model Recording {
+  id                    String              @id @default(uuid()) @db.Uuid
+  callId                String              @unique @map("call_id") @db.Uuid
+  s3Key                 String              @map("s3_key")
+  durationSeconds       Int?                @map("duration_seconds")
+  storageRegion         String              @default("ap-south-1") @map("storage_region")
+  consentCaptured       Boolean             @default(false) @map("consent_captured")
+  legalHold             Boolean             @default(false) @map("legal_hold")
+  expiresAt             DateTime            @map("expires_at")
+  isDeleted             Boolean             @default(false) @map("is_deleted")
+  deletedAt             DateTime?           @map("deleted_at")
+  createdAt             DateTime            @default(now()) @map("created_at")
+
+  call                  Call                @relation(fields: [callId], references: [id], onDelete: Cascade)
+
+  @@index([expiresAt, isDeleted])
+  @@map("recordings")
+}
+
+model CallToolExecution {
+  id                    String              @id @default(uuid()) @db.Uuid
+  callId                String              @map("call_id") @db.Uuid
+  toolName              String              @map("tool_name")
+  inputJson             Json                @map("input_json")
+  outputJson            Json?               @map("output_json")
+  status                String              @default("completed")
+  executedAt            DateTime            @default(now()) @map("executed_at")
+
+  call                  Call                @relation(fields: [callId], references: [id], onDelete: Cascade)
+
+  @@index([callId])
+  @@map("call_tool_executions")
+}
+
+model SavedCredential {
+  id                    String              @id @default(uuid()) @db.Uuid
+  organizationId        String              @map("organization_id") @db.Uuid
+  serviceName           String              @map("service_name")
+  ciphertext            String              @db.Text
+  iv                    String              @db.VarChar(64)
+  authTag               String              @map("auth_tag") @db.VarChar(64)
+  keyId                 String              @default("master-1") @map("key_id")
+  createdAt             DateTime            @default(now()) @map("created_at")
+  updatedAt             DateTime            @updatedAt @map("updated_at")
+
+  organization          Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@map("saved_credentials")
+}
+
+model ApiKey {
+  id                    String              @id @default(uuid()) @db.Uuid
+  organizationId        String              @map("organization_id") @db.Uuid
+  name                  String
+  keyPrefix             String              @map("key_prefix") @db.VarChar(16)
+  hashedSecret          String              @unique @map("hashed_secret")
+  createdAt             DateTime            @default(now()) @map("created_at")
+  revokedAt             DateTime?           @map("revoked_at")
+
+  organization          Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@map("api_keys")
+}
+
+model WebhookEndpoint {
+  id                    String              @id @default(uuid()) @db.Uuid
+  organizationId        String              @map("organization_id") @db.Uuid
+  url                   String              @db.Text
+  secretHash            String              @map("secret_hash")
+  isActive              Boolean             @default(true) @map("is_active")
+  createdAt             DateTime            @default(now()) @map("created_at")
+  updatedAt             DateTime            @updatedAt @map("updated_at")
+
+  organization          Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  deliveries            WebhookDelivery[]
+
+  @@index([organizationId])
+  @@map("webhook_endpoints")
+}
+
+model WebhookDelivery {
+  id                    String              @id @default(uuid()) @db.Uuid
+  webhookEndpointId     String              @map("webhook_endpoint_id") @db.Uuid
+  eventId               String              @map("event_id")
+  eventType             String              @map("event_type")
+  payloadJson           Json                @map("payload_json")
+  statusCode            Int?                @map("status_code")
+  success               Boolean             @default(false)
+  attemptCount          Int                 @default(1) @map("attempt_count")
+  createdAt             DateTime            @default(now()) @map("created_at")
+
+  webhookEndpoint       WebhookEndpoint     @relation(fields: [webhookEndpointId], references: [id], onDelete: Cascade)
+
+  @@index([webhookEndpointId, createdAt(sort: Desc)])
+  @@map("webhook_deliveries")
+}
+
+model CarrierWebhookEvent {
+  id                    String              @id @default(uuid()) @db.Uuid
+  eventId               String              @unique @map("event_id")
+  carrier               String
+  eventType             String              @map("event_type")
+  payloadHash           String              @map("payload_hash") @db.VarChar(64)
+  processedAt           DateTime            @default(now()) @map("processed_at")
+
+  @@map("carrier_webhook_events")
+}
+
+model CompliancePolicy {
+  id                         String         @id @default(uuid()) @db.Uuid
+  organizationId             String         @unique @map("organization_id") @db.Uuid
+  retentionDays              Int?           @default(90) @map("retention_days")
+  smartFollowupsEnabled      Boolean        @default(false) @map("smart_followups_enabled")
+  recordingConsentRequired   Boolean        @default(true) @map("recording_consent_required")
+  createdAt                  DateTime       @default(now()) @map("created_at")
+  updatedAt                  DateTime       @updatedAt @map("updated_at")
+
+  organization               Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@map("compliance_policies")
+}
+
+model PolicyAcceptance {
+  id                    String              @id @default(uuid()) @db.Uuid
+  organizationId        String              @map("organization_id") @db.Uuid
+  userId                String              @map("user_id") @db.Uuid
+  policyName            String              @map("policy_name")
+  version               String
+  acceptedAt            DateTime            @default(now()) @map("accepted_at")
+
+  organization          Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user                  User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@map("policy_acceptances")
+}

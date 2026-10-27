@@ -1,0 +1,21 @@
+services:
+  auris-postgres:
+    image: postgres:16-alpine
+    container_name: auris-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: auris_user
+      POSTGRES_PASSWORD: auris_dev_password_secure
+      POSTGRES_DB: auris_db
+    ports:
+      - "5434:5432"
+    volumes:
+      - auris_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U auris_user -d auris_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  auris_pgdata:
